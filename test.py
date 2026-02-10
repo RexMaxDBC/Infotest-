@@ -1,6 +1,87 @@
-# ────────────────────────────────────────────────
-# TABELLE AUFBAUEN – mit expliziter Längen-Kontrolle
-# ────────────────────────────────────────────────
+import streamlit as st
+import pandas as pd
+
+st.set_page_config(page_title="Katharineum Profilwahl", layout="wide")
+
+halbjahre = ["E1", "E2", "Q1.1", "Q1.2", "Q2.1", "Q2.2"]
+
+stunden_basis = {
+    "Profilfach": {"E1":4, "E2":4, "Q1.1":5, "Q1.2":5, "Q2.1":5, "Q2.2":5},
+    "Deutsch": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Mathematik": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Englisch": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Latein": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Französisch": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Griechisch": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Physik": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Chemie": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Biologie": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
+    "Geografie": {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2},
+    "Wirtschaft/Politik": {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2},
+    "Religion": {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2},
+    "Philosophie": {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2},
+    "Kunst": {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2},
+    "Musik": {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2},
+    "Darstellendes Spiel": {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2},
+}
+
+profil_optionen = {
+    "Sprachliches Profil": ["Latein", "Englisch"],
+    "Naturwissenschaftliches Profil": ["Physik"],
+    "Gesellschaftswissenschaftliches Profil": ["Geschichte"],
+    "Ästhetisches Profil": ["Musik", "Kunst"],
+}
+
+wp_optionen = {
+    "Sprachliches Profil": ["Geografie", "Wirtschaft/Politik"],
+    "Naturwissenschaftliches Profil": ["Geografie", "Wirtschaft/Politik"],
+    "Gesellschaftswissenschaftliches Profil": ["Geografie", "Wirtschaft/Politik"],
+    "Ästhetisches Profil": ["Geografie", "Wirtschaft/Politik"],
+}
+
+st.title("Katharineum Lübeck – Profilwahl Simulator")
+
+# ===============================================
+#          WAHLEN – erst hier werden Variablen gesetzt
+# ===============================================
+
+profil = st.selectbox("**1. Profil wählen**", list(profil_optionen.keys()))
+
+if profil:
+    profil_fach = st.radio("**Profilfach (P1)**", profil_optionen[profil])
+else:
+    profil_fach = None
+    st.info("Wähle zuerst ein Profil aus.")
+    st.stop()  # ← verhindert, dass der Rest ausgeführt wird, bevor alles definiert ist
+
+gewaehlte = {profil_fach}
+
+kern_fs = st.selectbox("**Kernfremdsprache**", 
+                       [f for f in ["Englisch", "Latein", "Französisch"] if f not in gewaehlte])
+
+gewaehlte.add(kern_fs)
+
+zweite_fs = st.selectbox("**2. Fremdsprache**", 
+                         ["Keine"] + [f for f in ["Englisch", "Latein", "Französisch", "Griechisch"] if f not in gewaehlte])
+
+if zweite_fs != "Keine":
+    gewaehlte.add(zweite_fs)
+
+verpf_nw = st.selectbox("**Verpflichtende Naturwissenschaft**", 
+                        [f for f in ["Physik", "Chemie", "Biologie"] if f not in gewaehlte])
+
+ethik_rel = st.radio("**Religion oder Philosophie**", ["Religion", "Philosophie"])
+
+wp = st.multiselect("**Weitere WP-Fächer**", wp_optionen[profil])
+
+ds = False
+if profil == "Ästhetisches Profil":
+    ds = st.checkbox("Darstellendes Spiel (nur Ästhetik-Profil, affin/Seminar)")
+
+# ===============================================
+#          ERST JETZT TABELLE BAUEN – alle Variablen sind definiert
+# ===============================================
+
 rows = []
 
 # Profilfach
@@ -11,81 +92,41 @@ rows.append(["Kern", "Deutsch"] + [stunden_basis["Deutsch"][h] for h in halbjahr
 rows.append(["Kern", "Mathematik"] + [stunden_basis["Mathematik"][h] for h in halbjahre])
 rows.append(["Kern", "Fremdsprache"] + [stunden_basis.get(kern_fs, stunden_basis["Englisch"])[h] for h in halbjahre])
 
-# 2. FS
 if zweite_fs != "Keine":
     rows.append(["2. FS", zweite_fs] + [stunden_basis.get(zweite_fs, stunden_basis["Englisch"])[h] for h in halbjahre])
 
-# Verpf. NW
 rows.append(["Verpf. NW", verpf_nw] + [stunden_basis[verpf_nw][h] for h in halbjahre])
 
-# Ethik/Rel.
 rows.append(["Ethik/Rel.", ethik_rel] + [stunden_basis[ethik_rel][h] for h in halbjahre])
 
-# WP-Fächer
 for w in wp:
     rows.append(["WP", w] + [stunden_basis.get(w, stunden_basis["Geografie"])[h] for h in halbjahre])
 
-# Darstellendes Spiel – nur Ästhetik + als eigene Kategorie
-if profil == "Ästhetisches Profil" and ds:
+if ds:
     rows.append(["Ästhetik-Seminar", "Darstellendes Spiel"] + [stunden_basis["Darstellendes Spiel"][h] for h in halbjahre])
 
-# ────────────────────────────────────────────────
-# Summen – jetzt LÄNGEN-SICHER
-# ────────────────────────────────────────────────
-num_cols = len(halbjahre) + 2  # Kategorie + Fach + 6 Halbjahre
-
-# Alle Zeilen auf korrekte Länge bringen (sicherheitshalber)
-for row in rows:
-    while len(row) < num_cols:
-        row.append(0)   # fehlende Werte mit 0 auffüllen
-
-# Jetzt Summen berechnen
+# Summenzeile – jetzt sicher
 summ_row = ["**Summe**", ""]
-for col_idx in range(2, num_cols):
-    col_sum = 0
-    for row in rows:
-        val = row[col_idx]
-        # numpy.int64 / int / float robust behandeln
-        if hasattr(val, 'item'):
-            col_sum += val.item()
-        elif isinstance(val, (int, float)):
-            col_sum += val
-        else:
-            col_sum += 0  # fallback
+num_halbjahre = len(halbjahre)
+for col in range(2, 2 + num_halbjahre):
+    col_sum = sum(row[col] for row in rows)
     summ_row.append(col_sum)
 
 rows.append(summ_row)
 
-# DataFrame erstellen
 df = pd.DataFrame(rows, columns=["Kategorie", "Fach"] + halbjahre)
 
-# Styling-Funktion (angepasst)
 def highlight(row):
-    styles = [''] * len(row)
     if row["Kategorie"] == "Profilfach (P1)":
-        for i in range(len(styles)):
-            styles[i] = 'background-color: #cce5ff; font-weight: bold'
+        return ['background-color: lightblue; font-weight: bold'] * len(row)
     if row["Kategorie"] == "**Summe**":
-        for i in range(len(styles)):
-            styles[i] = 'background-color: #e8e8e8; font-weight: bold'
-    return styles
+        return ['background-color: #f0f0f0; font-weight: bold'] * len(row)
+    return [''] * len(row)
 
-# Anzeige
 st.subheader("Stundenplan")
-st.dataframe(
-    df.style.apply(highlight, axis=1)
-            .format("{:.0f}", na_rep="-"),
-    use_container_width=True,
-    hide_index=True
-)
+st.dataframe(df.style.apply(highlight, axis=1).format("{:.0f}"), use_container_width=True, hide_index=True)
 
-# Belastungshinweis
-if "**Summe**" in df["Kategorie"].values:
-    e1 = df[df["Kategorie"] == "**Summe**"]["E1"].iloc[0]
-    e2 = df[df["Kategorie"] == "**Summe**"]["E2"].iloc[0]
-    e_sum = e1 + e2
-    if e_sum > 35:
-        st.error(f"E-Phase: {e_sum} Stunden – deutlich zu hoch!")
+st.caption("Fehler behoben: Alle Variablen werden vor der Tabelle gesetzt • Darstellendes Spiel nur Ästhetik + nicht als WP")
     elif e_sum > 32:
         st.warning(f"E-Phase: {e_sum} Stunden – relativ hoch")
     else:
