@@ -42,23 +42,22 @@ wp_optionen = {
 st.title("Katharineum Lübeck – Profilwahl Simulator")
 
 # ===============================================
-#          WAHLEN – erst hier werden Variablen gesetzt
+#           WAHLEN – erst hier werden Variablen definiert
 # ===============================================
 
-profil = st.selectbox("**1. Profil wählen**", list(profil_optionen.keys()))
+profil = st.selectbox("**1. Profil**", list(profil_optionen.keys()))
 
-if profil:
-    profil_fach = st.radio("**Profilfach (P1)**", profil_optionen[profil])
-else:
-    profil_fach = None
-    st.info("Wähle zuerst ein Profil aus.")
-    st.stop()  # ← verhindert, dass der Rest ausgeführt wird, bevor alles definiert ist
+# Sicherheitsabfrage: Ohne Profil → nichts weiter anzeigen
+if not profil:
+    st.info("Bitte wähle zuerst ein Profil aus.")
+    st.stop()
+
+profil_fach = st.radio("**Profilfach (P1 – erhöhtes Niveau)**", profil_optionen[profil])
 
 gewaehlte = {profil_fach}
 
 kern_fs = st.selectbox("**Kernfremdsprache**", 
                        [f for f in ["Englisch", "Latein", "Französisch"] if f not in gewaehlte])
-
 gewaehlte.add(kern_fs)
 
 zweite_fs = st.selectbox("**2. Fremdsprache**", 
@@ -76,18 +75,15 @@ wp = st.multiselect("**Weitere WP-Fächer**", wp_optionen[profil])
 
 ds = False
 if profil == "Ästhetisches Profil":
-    ds = st.checkbox("Darstellendes Spiel (nur Ästhetik-Profil, affin/Seminar)")
+    ds = st.checkbox("Darstellendes Spiel (nur im Ästhetik-Profil – affin/Seminar-Bereich)")
 
 # ===============================================
-#          ERST JETZT TABELLE BAUEN – alle Variablen sind definiert
+#           TABELLE – erst hier, wenn alles definiert ist
 # ===============================================
 
 rows = []
 
-# Profilfach
 rows.append(["Profilfach (P1)", profil_fach] + [stunden_basis["Profilfach"][h] for h in halbjahre])
-
-# Kernfächer
 rows.append(["Kern", "Deutsch"] + [stunden_basis["Deutsch"][h] for h in halbjahre])
 rows.append(["Kern", "Mathematik"] + [stunden_basis["Mathematik"][h] for h in halbjahre])
 rows.append(["Kern", "Fremdsprache"] + [stunden_basis.get(kern_fs, stunden_basis["Englisch"])[h] for h in halbjahre])
@@ -96,7 +92,6 @@ if zweite_fs != "Keine":
     rows.append(["2. FS", zweite_fs] + [stunden_basis.get(zweite_fs, stunden_basis["Englisch"])[h] for h in halbjahre])
 
 rows.append(["Verpf. NW", verpf_nw] + [stunden_basis[verpf_nw][h] for h in halbjahre])
-
 rows.append(["Ethik/Rel.", ethik_rel] + [stunden_basis[ethik_rel][h] for h in halbjahre])
 
 for w in wp:
@@ -105,11 +100,13 @@ for w in wp:
 if ds:
     rows.append(["Ästhetik-Seminar", "Darstellendes Spiel"] + [stunden_basis["Darstellendes Spiel"][h] for h in halbjahre])
 
-# Summenzeile – jetzt sicher
+# Summen (numpy-sicher)
 summ_row = ["**Summe**", ""]
-num_halbjahre = len(halbjahre)
-for col in range(2, 2 + num_halbjahre):
-    col_sum = sum(row[col] for row in rows)
+for col in range(2, len(halbjahre) + 2):
+    col_sum = 0
+    for row in rows:
+        val = row[col]
+        col_sum += val if isinstance(val, (int, float)) else 0
     summ_row.append(col_sum)
 
 rows.append(summ_row)
@@ -123,10 +120,21 @@ def highlight(row):
         return ['background-color: #f0f0f0; font-weight: bold'] * len(row)
     return [''] * len(row)
 
-st.subheader("Stundenplan")
-st.dataframe(df.style.apply(highlight, axis=1).format("{:.0f}"), use_container_width=True, hide_index=True)
+st.subheader("Dein Stundenplan")
+st.dataframe(
+    df.style.apply(highlight, axis=1).format("{:.0f}", na_rep="-"),
+    use_container_width=True,
+    hide_index=True
+)
 
-st.caption("Fehler behoben: Alle Variablen werden vor der Tabelle gesetzt • Darstellendes Spiel nur Ästhetik + nicht als WP")
+# Belastungshinweis (Indentation korrigiert)
+e_sum = summ_row[2] + summ_row[3]  # E1 + E2
+if e_sum > 35:
+    st.error(f"E-Phase Belastung: {e_sum} Stunden → deutlich zu hoch (OAPVO empfiehlt max. ~35)")
+elif e_sum > 32:
+    st.warning(f"E-Phase Belastung: {e_sum} Stunden → relativ hoch")
+else:
+    st.success(f"E-Phase Belastung: {e_sum} Stunden → im grünen Bereich")
     elif e_sum > 32:
         st.warning(f"E-Phase: {e_sum} Stunden – relativ hoch")
     else:
