@@ -72,7 +72,7 @@ ds = False
 if profil == "Ästhetisches Profil":
     ds = st.checkbox("Darstellendes Spiel (nur Ästhetik – affin/Seminar)")
 
-# Tabelle aufbauen
+# Tabelle
 rows = []
 
 rows.append(["Profilfach (P1)", profil_fach] + [stunden["Profilfach"][h] for h in halbjahre])
@@ -103,7 +103,7 @@ rows.append(summ_row)
 
 df = pd.DataFrame(rows, columns=["Kategorie", "Fach"] + halbjahre)
 
-# Style-Funktion – immer volle Liste zurückgeben
+# STYLE-FUNKTION – jetzt immer korrekte Länge
 def highlight(row):
     styles = [''] * len(row)
     kategorie = row.get("Kategorie", "")
@@ -129,10 +129,8 @@ if "**Summe**" in df["Kategorie"].values:
     e_sum = e1 + e2
 
 if e_sum > 35:
-    st.error(f"E-Phase: {e_sum} h – deutlich zu hoch!")
+    st.error(f"E-Phase: {e_sum} h – zu hoch!")
 elif e_sum > 32:
-    st.warning(f"E-Phase: {e_sum} h – relativ hoch")
+    st.warning(f"E-Phase: {e_sum} h – hoch")
 else:
     st.success(f"E-Phase: {e_sum} h – ok")
-
-st.caption("Fehler behoben • Kein NameError/KeyError • Styling stabil • DS nur Ästhetik")
