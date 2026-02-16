@@ -6,7 +6,7 @@ st.set_page_config(page_title="Katharineum Profilwahl", layout="wide")
 # Halbjahre
 halbjahre = ["E1", "E2", "Q1.1", "Q1.2", "Q2.1", "Q2.2"]
 
-# Stunden-Dictionary (exakt aus deinen Tabellen – keine "13")
+# Stunden-Dictionary
 stunden = {
     "Profilfach": {"E1":4, "E2":4, "Q1.1":5, "Q1.2":5, "Q2.1":5, "Q2.2":5},
     "Deutsch": {"E1":3, "E2":3, "Q1.1":3, "Q1.2":3, "Q2.1":3, "Q2.2":3},
@@ -34,121 +34,102 @@ profil_optionen = {
     "Ästhetisches Profil": ["Musik", "Kunst"],
 }
 
-wp_optionen = {
-    "Sprachliches Profil": ["Geografie", "Wirtschaft/Politik"],
-    "Naturwissenschaftliches Profil": ["Geografie", "Wirtschaft/Politik"],
-    "Gesellschaftswissenschaftliches Profil": ["Geografie", "Wirtschaft/Politik"],
-    "Ästhetisches Profil": ["Geografie", "Wirtschaft/Politik"],
-}
+wp_optionen = ["Geografie", "Wirtschaft/Politik", "Chemie", "Biologie", "Physik"]
 
 st.title("Katharineum Lübeck – Profilwahl & Stundenplaner")
 
-# ===============================================
-# WAHLEN – Variablen werden hier gesetzt
-# ===============================================
-
+# --- WAHLEN ---
 profil = st.selectbox("**1. Profil wählen**", [""] + list(profil_optionen.keys()))
 
 if not profil:
     st.info("Bitte zuerst ein Profil auswählen.")
-    st.stop()  # Verhindert Absturz, bevor Variablen definiert sind
+    st.stop()
 
-profil_fach = st.radio("**Profilfach (P1 – erhöhtes Niveau)**", profil_optionen[profil])
+col1, col2 = st.columns(2)
 
-gewaehlte = {profil_fach}
+with col1:
+    profil_fach = st.radio("**Profilfach (P1 – erhöhtes Niveau)**", profil_optionen[profil])
+    gewaehlte = {profil_fach}
 
-kern_fs = st.selectbox("**Kernfremdsprache**", 
-                       [f for f in ["Englisch", "Latein", "Französisch"] if f not in gewaehlte])
-gewaehlte.add(kern_fs)
+    kern_fs = st.selectbox("**Kernfremdsprache**", 
+                           [f for f in ["Englisch", "Latein", "Französisch"] if f not in gewaehlte])
+    gewaehlte.add(kern_fs)
 
-zweite_fs = st.selectbox("**2. Fremdsprache**", 
-                         ["Keine"] + [f for f in ["Englisch", "Latein", "Französisch", "Griechisch"] if f not in gewaehlte])
+    zweite_fs = st.selectbox("**2. Fremdsprache**", 
+                             ["Keine"] + [f for f in ["Englisch", "Latein", "Französisch", "Griechisch"] if f not in gewaehlte])
+    if zweite_fs != "Keine": gewaehlte.add(zweite_fs)
 
-if zweite_fs != "Keine":
-    gewaehlte.add(zweite_fs)
+with col2:
+    verpf_nw = st.selectbox("**Verpflichtende Naturwissenschaft**", 
+                            [f for f in ["Physik", "Chemie", "Biologie"] if f not in gewaehlte])
+    gewaehlte.add(verpf_nw)
 
-verpf_nw = st.selectbox("**Verpflichtende Naturwissenschaft**", 
-                        [f for f in ["Physik", "Chemie", "Biologie"] if f not in gewaehlte])
-
-ethik_rel = st.radio("**Religion oder Philosophie**", ["Religion", "Philosophie"])
-
-wp_faecher = st.multiselect("**Weitere WP-Fächer**", wp_optionen[profil])
+    ethik_rel = st.radio("**Religion oder Philosophie**", ["Religion", "Philosophie"])
+    
+    wp_faecher = st.multiselect("**Weitere WP-Fächer**", [f for f in wp_optionen if f not in gewaehlte])
 
 ds = False
 if profil == "Ästhetisches Profil":
-    ds = st.checkbox("Darstellendes Spiel (nur im Ästhetischen Profil – affin/Seminar)")
+    ds = st.checkbox("Darstellendes Spiel (Zusatzfach)")
 
-# ===============================================
-# TABELLE – erst hier, wenn alles definiert ist
-# ===============================================
-
+# --- TABELLE ERSTELLEN ---
 rows = []
 
-rows.append(["Profilfach (P1)", profil_fach] + [stunden["Profilfach"].get(h, 0) for h in halbjahre])
-rows.append(["Kernfach", "Deutsch"] + [stunden["Deutsch"].get(h, 0) for h in halbjahre])
-rows.append(["Kernfach", "Mathematik"] + [stunden["Mathematik"].get(h, 0) for h in halbjahre])
-rows.append(["Kernfach", kern_fs] + [stunden.get(kern_fs, stunden["Englisch"]).get(h, 3) for h in halbjahre])
+def get_stunden(fach_name, ist_profilfach=False):
+    key = "Profilfach" if ist_profilfach else fach_name
+    # Fallback, falls ein Fach nicht im Dictionary ist (z.B. Geschichte)
+    data = stunden.get(key, {"E1":2, "E2":2, "Q1.1":2, "Q1.2":2, "Q2.1":2, "Q2.2":2})
+    return [data.get(h, 0) for h in halbjahre]
+
+rows.append(["Profilfach (P1)", profil_fach] + get_stunden(profil_fach, True))
+rows.append(["Kernfach", "Deutsch"] + get_stunden("Deutsch"))
+rows.append(["Kernfach", "Mathematik"] + get_stunden("Mathematik"))
+rows.append(["Kernfach", kern_fs] + get_stunden(kern_fs))
 
 if zweite_fs != "Keine":
-    rows.append(["2. FS", zweite_fs] + [stunden.get(zweite_fs, stunden["Englisch"]).get(h, 3) for h in halbjahre])
+    rows.append(["2. FS", zweite_fs] + get_stunden(zweite_fs))
 
-rows.append(["Verpf. NW", verpf_nw] + [stunden.get(verpf_nw, stunden["Physik"]).get(h, 3) for h in halbjahre])
-
-rows.append(["Ethik/Rel.", ethik_rel] + [stunden[ethik_rel].get(h, 2) for h in halbjahre])
+rows.append(["Verpf. NW", verpf_nw] + get_stunden(verpf_nw))
+rows.append(["Ethik/Rel.", ethik_rel] + get_stunden(ethik_rel))
 
 for wp in wp_faecher:
-    rows.append(["WP-Fach", wp] + [stunden.get(wp, stunden["Geografie"]).get(h, 2) for h in halbjahre])
+    rows.append(["WP-Fach", wp] + get_stunden(wp))
 
 if ds:
-    rows.append(["Ästhetik-Seminar", "Darstellendes Spiel"] + [stunden["Darstellendes Spiel"].get(h, 2) for h in halbjahre])
+    rows.append(["Zusatz", "Darstellendes Spiel"] + get_stunden("Darstellendes Spiel"))
 
-# Summen – robust gegen numpy & fehlende Werte
-summ_row = ["**Summe**", ""]
-for col_idx in range(2, len(halbjahre) + 2):
-    col_sum = 0
-    for row in rows:
-        if len(row) > col_idx:
-            val = row[col_idx]
-            col_sum += val if isinstance(val, (int, float)) else 0
-    summ_row.append(col_sum)
-
-rows.append(summ_row)
-
+# DataFrame erstellen
 df = pd.DataFrame(rows, columns=["Kategorie", "Fach"] + halbjahre)
 
-# Styling – immer korrekte Länge
-def highlight(row):
-    styles = [''] * len(row)  # Immer volle Liste!
-    kategorie = row.get("Kategorie", "")
-    if kategorie == "Profilfach (P1)":
-        styles = ['background-color: #cce5ff; font-weight: bold'] * len(row)
-    if kategorie == "**Summe**":
-        styles = ['background-color: #f0f0f0; font-weight: bold'] * len(row)
-    return styles
+# Summenzeile berechnen
+summen = df[halbjahre].sum()
+sum_row = pd.DataFrame([["**SUMME**", "Gesamt"] + summen.tolist()], columns=df.columns)
+df = pd.concat([df, sum_row], ignore_index=True)
 
-st.subheader("Dein Stundenplan")
-if df.empty:
-    st.info("Noch keine Fächer gewählt – wähle dein Profil und weitere Fächer.")
+# Styling Funktion
+def highlight_rows(row):
+    if row["Kategorie"] == "Profilfach (P1)":
+        return ['background-color: #e6f3ff'] * len(row)
+    if row["Kategorie"] == "**SUMME**":
+        return ['background-color: #f0f2f6; font-weight: bold'] * len(row)
+    return [''] * len(row)
+
+st.subheader("Dein voraussichtlicher Stundenplan")
+
+# Visualisierung
+st.dataframe(
+    df.style.apply(highlight_rows, axis=1),
+    use_container_width=True,
+    hide_index=True
+)
+
+# Belastungs-Check (E-Phase Durchschnitt)
+e_stunden = (summen["E1"] + summen["E2"]) / 2
+if e_stunden > 34:
+    st.error(f"⚠️ Hohe Belastung: Durchschnittlich {e_stunden:.1f} Stunden in der E-Phase.")
+elif e_stunden < 30:
+    st.warning(f"ℹ️ Wenig Stunden: {e_stunden:.1f}. Prüfe, ob du alle Belegungspflichten erfüllst.")
 else:
-    st.dataframe(
-        df.style.apply(highlight, axis=1).format("{:.0f}", na_rep="-"),
-        use_container_width=True,
-        hide_index=True
-    )
+    st.success(f"✅ Ausgewogener Plan: {e_stunden:.1f} Stunden in der E-Phase.")
 
-# Belastungshinweis – sicher gegen leere Tabelle
-e_sum = 0
-if "**Summe**" in df["Kategorie"].values:
-    sum_row = df[df["Kategorie"] == "**Summe**"].iloc[0]
-    e1 = sum_row.get("E1", 0)
-    e2 = sum_row.get("E2", 0)
-    e_sum = e1 + e2
-
-if e_sum > 35:
-    st.error(f"E-Phase Belastung: {e_sum} Stunden – deutlich zu hoch!")
-elif e_sum > 32:
-    st.warning(f"E-Phase Belastung: {e_sum} Stunden – relativ hoch")
-else:
-    st.success(f"E-Phase Belastung: {e_sum} Stunden – im grünen Bereich")
-
-st.caption("Stabile Version – keine NameError, IndexError oder ValueError mehr • DS nur Ästhetik")
+st.caption("Hinweis: Dies ist eine Planungshilfe. Maßgeblich ist die offizielle Oberstufenverordnung.")
