@@ -1,15 +1,21 @@
 import streamlit as st
+import firebase_admin
+from firebase_admin import credentials, firestore, storage
 import numpy as np
 from keras.models import load_model
 from PIL import Image, ImageOps
-from supabase import create_client, Client
 import os
+from datetime import datetime
 
-# --- SUPABASE SETUP ---
-# Ersetze diese Werte mit deinen echten Supabase-Daten (aus den Settings)
-url: str = "DEINE_SUPABASE_URL"
-key: str = "DEIN_SUPABASE_ANON_KEY"
-supabase: Client = create_client(url, key)
+# --- FIREBASE SETUP ---
+if not firebase_admin._apps:
+    cred = credentials.Certificate("firebase-key.json")
+    firebase_admin.initialize_app(cred, {
+        'storageBucket': 'DEIN-PROJEKT-ID.appspot.com' # Hier deine Storage-URL eintragen
+    })
+
+db = firestore.client()
+bucket = storage.bucket()
 
 # --- KI MODELL SETUP ---
 @st.cache_resource
@@ -23,95 +29,76 @@ model, class_names = setup_ai()
 
 def predict_category(image):
     size = (224, 224)
-    image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
-    image_array = np.asarray(image)
+    image_resized = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
+    image_array = np.asarray(image_resized)
     normalized_image_array = (image_array.astype(np.float32) / 127.5) - 1
     data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
     data[0] = normalized_image_array
-    
     prediction = model.predict(data)
     index = np.argmax(prediction)
-    return class_names[index][2:].strip(), prediction[0][index]
+    return class_names[index][2:].strip(), float(prediction[0][index])
 
-# --- UI LAYOUT ---
-st.set_page_config(page_title="Fundbüro Katharineum", page_icon="🏫")
-st.title("🏫 Digitales Fundbüro Katharineum")
+# --- UI ---
+st.set_page_config(page_title="Katharineum Fundbüro", layout="wide")
+st.title("🏫 Digitales Fundbüro (Firebase Edition)")
 
-tab1, tab2 = st.tabs(["🔍 Suchen", "📤 Fundstück melden"])
+tab1, tab2 = st.tabs(["🔍 Suchen", "📤 Neues Fundstück"])
 
 # --- TAB 1: SUCHEN ---
 with tab1:
-    search_query = st.text_input("Nach was suchst du? (z.B. Stift, Jacke)")
+    search = st.text_input("Wonach suchst du?")
+    items_ref = db.collection("fundsachen")
     
     # Datenbank abfragen
-    if search_query:
-        response = supabase.table("items").select("*").ilike("category", f"%{search_query}%").execute()
-    else:
-        response = supabase.table("items").select("*").execute()
+    docs = items_ref.stream()
     
-    items = response.data
+    cols = st.columns(4)
+    found_any = False
     
-    if items:
-        cols = st.columns(3)
-        for i, item in enumerate(items):
-            with cols[i % 3]:
-                st.image(item['image_url'], use_container_width=True)
-                st.write(f"**Kategorie:** {item['category']}")
-                st.caption(f"Gefunden am: {item['created_at'][:10]}")
-    else:
-        st.info("Keine passenden Fundstücke gefunden.")
+    for i, doc in enumerate(docs):
+        item = doc.to_dict()
+        # Einfacher Filter
+        if search.lower() in item['kategorie'].lower() or not search:
+            with cols[i % 4]:
+                st.image(item['bild_url'], use_container_width=True)
+                st.write(f"**{item['kategorie']}**")
+                st.caption(f"Gefunden: {item['datum']}")
+            found_any = True
+            
+    if not found_any:
+        st.info("Keine Fundstücke gefunden.")
 
-# --- TAB 2: MELDEN (Hausmeister / Lehrer) ---
+# --- TAB 2: MELDEN ---
 with tab2:
-    st.subheader("Neues Fundstück erfassen")
-    uploaded_file = st.file_uploader("Foto des Gegenstands", type=["jpg", "png", "jpeg"])
+    st.subheader("Gegenstand registrieren")
+    file = st.file_uploader("Foto machen/hochladen", type=["jpg", "png", "jpeg"])
     
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, width=200)
+    if file:
+        img = Image.open(file).convert("RGB")
+        st.image(img, width=250)
         
-        if st.button("KI-Analyse & Speichern"):
-            # 1. KI erkennt Kategorie
-            label, score = predict_category(image)
-            st.write(f"KI erkennt: **{label}** ({round(score*100)}%)")
-            
-            # 2. Bild zu Supabase Storage hochladen
-            # (Hinweis: Du musst einen Bucket namens 'images' in Supabase erstellen)
-            file_name = f"found_{uploaded_file.name}"
-            # In der Realität müsstest du hier den Upload-Befehl für den Storage nutzen
-            # Der Einfachheit halber nehmen wir hier eine Dummy-URL an:
-            fake_url = f"{url}/storage/v1/object/public/images/{file_name}"
-            
-            # 3. Daten in Tabelle 'items' speichern
-            data = {
-                "category": label,
-                "image_url": fake_url
-            }
-            supabase.table("items").insert(data).execute()
-            st.success(f"Erfolgreich als '{label}' im Fundbüro gespeichert!")
-        image_array = np.asarray(image_resized)
-        
-        # Normalisierung
-        normalized_image_array = (image_array.astype(np.float32) / 127.5) - 1
-        
-        # Daten-Array für Vorhersage
-        data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
-        data[0] = normalized_image_array
-
-        # Vorhersage treffen
-        prediction = model.predict(data)
-        index = np.argmax(prediction)
-        
-        # Label extrahieren (aus deiner labels.txt) 
-        # class_names[0] ist "rene schmock", class_names[1] ist "random" 
-        label = class_names[index].strip()[2:] 
-        confidence_score = prediction[0][index]
-
-        # Ergebnis-Ausgabe
-        st.divider()
-        if index == 0:
-            st.success(f"### Ergebnis: {label}")
-        else:
-            st.warning(f"### Ergebnis: {label}")
-            
-        st.write(f"**Sicherheit:** {round(confidence_score * 100, 2)}%")
+        if st.button("In Datenbank speichern"):
+            with st.spinner("KI analysiert und speichert..."):
+                # 1. KI Label
+                label, score = predict_category(img)
+                
+                # 2. Bild in Firebase Storage hochladen
+                image_path = f"images/{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                blob = bucket.blob(image_path)
+                
+                # Temporär lokal speichern für Upload
+                img.save("temp.jpg")
+                blob.upload_from_filename("temp.jpg")
+                blob.make_public()
+                url = blob.public_url
+                
+                # 3. Daten in Firestore speichern
+                db.collection("fundsachen").add({
+                    "kategorie": label,
+                    "bild_url": url,
+                    "datum": datetime.now().strftime("%d.%m.%Y %H:%M"),
+                    "score": score
+                })
+                
+                st.success(f"Gespeichert als: {label}!")
+                os.remove("temp.jpg")
