@@ -1,53 +1,33 @@
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, firestore, storage
 import numpy as np
 from keras.models import load_model
 from PIL import Image, ImageOps
+from supabase import create_client, Client
 import os
 from datetime import datetime
 
-# --- 1. FIREBASE INITIALISIERUNG ---
-def init_firebase():
-    # Prüfen, ob die App bereits läuft (wichtig für Streamlit Re-runs)
-    if not firebase_admin._apps:
-        try:
-            base_path = os.path.dirname(__file__)
-            key_path = os.path.join(base_path, "firebase-key.json")
-            
-            if not os.path.exists(key_path):
-                st.error(f"❌ Datei nicht gefunden: {key_path}")
-                return False
-                
-            cred = credentials.Certificate(key_path)
-            firebase_admin.initialize_app(cred, {
-                'storageBucket': 'DEIN-PROJEKT-ID.appspot.com' # <--- HIER DEINE ID EINTRAGEN
-            })
-            return True
-        except Exception as e:
-            st.error(f"❌ Firebase Fehler: {e}")
-            return False
-    return True
+# --- 1. SUPABASE SETUP ---
+# Ersetze diese mit deinen echten Daten aus den Supabase Settings (API)
+SUPABASE_URL = "DEINE_SUPABASE_URL"
+SUPABASE_KEY = "DEIN_SUPABASE_ANON_KEY"
 
-# Initialisierung ausführen
-if init_firebase():
-    db = firestore.client()
-    bucket = storage.bucket()
-else:
-    st.warning("Warte auf Firebase-Konfiguration...")
+@st.cache_resource
+def init_supabase() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+try:
+    supabase: Client = init_supabase()
+except Exception as e:
+    st.error(f"Supabase Verbindung fehlgeschlagen: {e}")
     st.stop()
 
 # --- 2. KI MODELL SETUP ---
 @st.cache_resource
 def setup_ai():
-    try:
-        model = load_model("keras_model.h5", compile=False)
-        with open("labels.txt", "r") as f:
-            class_names = f.readlines()
-        return model, class_names
-    except Exception as e:
-        st.error(f"❌ Fehler beim Laden des KI-Modells: {e}")
-        return None, None
+    model = load_model("keras_model.h5", compile=False)
+    with open("labels.txt", "r") as f:
+        class_names = f.readlines()
+    return model, class_names
 
 model, class_names = setup_ai()
 
@@ -62,79 +42,65 @@ def predict_category(image):
     
     prediction = model.predict(data)
     index = np.argmax(prediction)
-    # Entfernt "0 " oder "1 " vom Anfang des Labels
     label = class_names[index].strip()[2:]
     return label, float(prediction[0][index])
 
 # --- 3. UI LAYOUT ---
 st.set_page_config(page_title="Katharineum Fundbüro", layout="wide")
-st.title("🏫 Digitales Fundbüro Katharineum")
+st.title("🏫 Digitales Fundbüro (Supabase)")
 
 tab1, tab2 = st.tabs(["🔍 Suchen", "📤 Neues Fundstück melden"])
 
 # --- TAB 1: SUCHEN ---
 with tab1:
-    search_query = st.text_input("Wonach suchst du? (z.B. Stift)")
+    search_query = st.text_input("Suchen nach...")
     
-    try:
-        items_ref = db.collection("fundsachen")
-        docs = items_ref.stream()
-        
+    # Daten aus Supabase abrufen
+    query = supabase.table("items").select("*")
+    if search_query:
+        query = query.ilike("category", f"%{search_query}%")
+    
+    result = query.execute()
+    items = result.data
+
+    if items:
         cols = st.columns(4)
-        count = 0
-        
-        for doc in docs:
-            item = doc.to_dict()
-            kat = item.get('kategorie', 'Unbekannt')
-            
-            # Suche/Filter
-            if not search_query or search_query.lower() in kat.lower():
-                with cols[count % 4]:
-                    st.image(item.get('bild_url'), use_container_width=True)
-                    st.write(f"**{kat}**")
-                    st.caption(f"Gefunden: {item.get('datum')}")
-                count += 1
-        
-        if count == 0:
-            st.info("Keine Fundstücke gefunden.")
-    except Exception as e:
-        st.error(f"Fehler beim Laden der Daten: {e}")
+        for i, item in enumerate(items):
+            with cols[i % 4]:
+                st.image(item['image_url'], use_container_width=True)
+                st.write(f"**{item['category']}**")
+    else:
+        st.info("Keine Fundstücke gefunden.")
 
 # --- TAB 2: MELDEN ---
 with tab2:
-    st.subheader("Gegenstand registrieren")
-    uploaded_file = st.file_uploader("Bild auswählen", type=["jpg", "png", "jpeg"])
+    st.subheader("Gegenstand erfassen")
+    file = st.file_uploader("Bild hochladen", type=["jpg", "png", "jpeg"])
     
-    if uploaded_file:
-        img = Image.open(uploaded_file).convert("RGB")
-        st.image(img, width=300)
+    if file:
+        img = Image.open(file).convert("RGB")
+        st.image(img, width=250)
         
-        if st.button("KI-Analyse & Speichern"):
-            if model is None:
-                st.error("KI-Modell nicht geladen.")
-            else:
-                with st.spinner("KI arbeitet..."):
-                    # 1. KI Vorhersage
-                    label, score = predict_category(img)
-                    
-                    # 2. Bild-Upload
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    file_name = f"images/{timestamp}.jpg"
-                    blob = bucket.blob(file_name)
-                    
-                    img.save("temp_upload.jpg")
-                    blob.upload_from_filename("temp_upload.jpg")
-                    blob.make_public()
-                    public_url = blob.public_url
-                    
-                    # 3. In Datenbank speichern
-                    db.collection("fundsachen").add({
-                        "kategorie": label,
-                        "bild_url": public_url,
-                        "datum": datetime.now().strftime("%d.%m.%Y, %H:%M"),
-                        "sicherheit": score
-                    })
-                    
-                    st.success(f"Erfolgreich als '{label}' gespeichert!")
-                    if os.path.exists("temp_upload.jpg"):
-                        os.remove("temp_upload.jpg")
+        if st.button("Speichern"):
+            with st.spinner("KI analysiert..."):
+                # 1. KI Label
+                label, score = predict_category(img)
+                
+                # 2. Bild-Upload in Storage
+                file_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                img.save("temp.jpg")
+                
+                with open("temp.jpg", "rb") as f:
+                    supabase.storage.from_("images").upload(file_name, f)
+                
+                # Public URL generieren
+                public_url = supabase.storage.from_("images").get_public_url(file_name)
+                
+                # 3. Datenbank-Eintrag
+                supabase.table("items").insert({
+                    "category": label,
+                    "image_url": public_url
+                }).execute()
+                
+                st.success(f"Gespeichert als: {label}")
+                os.remove("temp.jpg")
