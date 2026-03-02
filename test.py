@@ -11,7 +11,6 @@ from keras.layers import DepthwiseConv2D
 from supabase import create_client, Client
 
 # --- 1. KOMPATIBILITÄTS-FIX FÜR KERAS ---
-# Verhindert den 'groups'-Fehler bei älteren/neueren Keras-Versionen
 class FixedDepthwiseConv2D(DepthwiseConv2D):
     def __init__(self, **kwargs):
         if 'groups' in kwargs:
@@ -23,6 +22,12 @@ try:
     url: str = st.secrets["SUPABASE_URL"]
     key: str = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(url, key)
+    
+    # OPTION 1: Mit Service Role Key (für Backend-Operationen)
+    # Falls du einen Service Role Key in den Secrets hast:
+    # service_key: str = st.secrets["SUPABASE_SERVICE_KEY"]
+    # supabase = create_client(url, service_key)
+    
 except Exception as e:
     st.error("❌ Fehler: Supabase Secrets nicht gefunden.")
     st.info("Bitte trage SUPABASE_URL und SUPABASE_KEY in den Streamlit Settings ein.")
@@ -32,7 +37,6 @@ except Exception as e:
 @st.cache_resource
 def setup_ai():
     try:
-        # Modell laden mit der korrigierten Schicht
         model = load_model(
             "keras_model.h5", 
             compile=False, 
@@ -58,8 +62,7 @@ def predict_category(image):
     
     prediction = model.predict(data)
     index = np.argmax(prediction)
-    # Entfernt "0 " am Anfang des Labels (z.B. "0 Stift")
-    label = class_names[index].strip()[2:]
+    label = class_names[index].strip()[2:]  # Entfernt "0 " am Anfang
     return label, float(prediction[0][index])
 
 # --- 4. UI LAYOUT ---
@@ -105,25 +108,57 @@ with tab2:
                 st.error("KI konnte nicht geladen werden.")
             else:
                 with st.spinner("Verarbeite..."):
-                    # KI Vorhersage
-                    label, score = predict_category(img)
-                    
-                    # Bild-Upload
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    file_name = f"{timestamp}.jpg"
-                    img.save("temp.jpg")
-                    
-                    with open("temp.jpg", "rb") as f:
-                        supabase.storage.from_("images").upload(file_name, f)
-                    
-                    public_url = supabase.storage.from_("images").get_public_url(file_name)
-                    
-                    # In Datenbank
-                    supabase.table("items").insert({
-                        "category": label,
-                        "image_url": public_url
-                    }).execute()
-                    
-                    st.success(f"✅ Als '{label}' gespeichert!")
-                    if os.path.exists("temp.jpg"):
-                        os.remove("temp.jpg")
+                    try:
+                        # KI Vorhersage
+                        label, score = predict_category(img)
+                        
+                        # Bild-Upload
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        file_name = f"{timestamp}.jpg"
+                        img.save("temp.jpg")
+                        
+                        # Bild in Supabase Storage hochladen
+                        with open("temp.jpg", "rb") as f:
+                            # WICHTIG: Korrekte Parameter-Reihenfolge
+                            supabase.storage.from_("images").upload(
+                                path=file_name,
+                                file=f,
+                                file_options={"content-type": "image/jpeg"}
+                            )
+                        
+                        # Öffentliche URL generieren
+                        public_url = supabase.storage.from_("images").get_public_url(file_name)
+                        
+                        # In Datenbank speichern - MIT AUTHENTIFIZIERUNG
+                        # OPTION 2: Anonymen User erstellen (falls RLS für anonyme inserts erlaubt)
+                        # Oder: RLS vorübergehend deaktivieren (nur für Entwicklung)
+                        
+                        # Versuche mit Insert
+                        data = supabase.table("items").insert({
+                            "category": label,
+                            "image_url": public_url,
+                            "created_at": datetime.now().isoformat()
+                        }).execute()
+                        
+                        st.success(f"✅ Als '{label}' gespeichert!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Fehler beim Speichern: {str(e)}")
+                        st.info("""
+                        **Lösungsmöglichkeiten:**
+                        1. **RLS Policy in Supabase erstellen** (empfohlen):
+                           - Gehe zu Authentication → Policies
+                           - Erstelle eine INSERT Policy für "items" Tabelle
+                           - Erlaube INSERT für "anon" oder "authenticated" users
+                        
+                        2. **Service Role Key verwenden**:
+                           - Füge SUPABASE_SERVICE_KEY zu den Secrets hinzu
+                           - Verwende diesen Key statt dem anon key
+                        
+                        3. **RLS temporär deaktivieren** (nur für Tests):
+                           - In Supabase Dashboard → Authentication → Policies
+                           - Bei der "items" Tabelle "Disable RLS" wählen
+                        """)
+                    finally:
+                        if os.path.exists("temp.jpg"):
+                            os.remove("temp.jpg")
