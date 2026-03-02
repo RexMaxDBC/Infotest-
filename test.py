@@ -24,9 +24,8 @@ try:
     key: str = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(url, key)
     
-    # Debug: Zeige Verbindungsinfos (ohne den vollen Key zu zeigen)
-    st.sidebar.write("✅ Supabase verbunden")
-    st.sidebar.write(f"URL: {url[:30]}...")
+    # Debug: Zeige Verbindungsinfos
+    st.sidebar.success("✅ Supabase verbunden")
     
 except Exception as e:
     st.error("❌ Fehler: Supabase Secrets nicht gefunden.")
@@ -84,11 +83,13 @@ with tab1:
         items = result.data
 
         if items:
+            st.write(f"📊 {len(items)} Fundstücke gefunden")
             cols = st.columns(4)
             for i, item in enumerate(items):
                 with cols[i % 4]:
                     st.image(item['image_url'], use_container_width=True)
                     st.write(f"**{item['category']}**")
+                    st.caption(f"ID: {item['id']}")  # Zeige ID für Debug
         else:
             st.info("Keine Fundstücke gefunden.")
     except Exception as e:
@@ -113,108 +114,132 @@ with tab2:
                     try:
                         # KI Vorhersage
                         label, score = predict_category(img)
-                        st.info(f"KI erkannte: {label} ({score:.2%})")
+                        st.info(f"🤖 KI erkannte: **{label}** ({score:.2%} Wahrscheinlichkeit)")
                         
                         # Bild speichern
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                         file_name = f"{timestamp}.jpg"
                         img.save(temp_file)
                         
-                        # --- METHODE 1: Supabase Storage Upload (korrigiert) ---
+                        # --- STORAGE UPLOAD ---
                         try:
+                            # Prüfe ob Bucket existiert und zugänglich ist
+                            storage = supabase.storage.from_("images")
+                            
+                            # Versuche zuerst zu listen (testet Berechtigung)
+                            try:
+                                files = storage.list()
+                                st.sidebar.write(f"📁 {len(files)} Dateien im Bucket")
+                            except:
+                                st.sidebar.warning("Bucket existiert vielleicht nicht")
+                            
+                            # Bild hochladen
                             with open(temp_file, "rb") as f:
-                                # WICHTIG: Storage-Bucket existiert? Prüfen!
-                                storage = supabase.storage.from_("images")
-                                
-                                # Test: Liste vorhandene Dateien
-                                try:
-                                    files = storage.list()
-                                    st.sidebar.write(f"📁 Dateien im Bucket: {len(files)}")
-                                except Exception as e:
-                                    st.sidebar.warning(f"Bucket-List Fehler: {e}")
-                                
-                                # Upload mit expliziten Parametern
                                 storage.upload(
                                     path=file_name,
                                     file=f,
-                                    file_options={"content-type": "image/jpeg", "upsert": "true"}
+                                    file_options={"content-type": "image/jpeg"}
                                 )
-                                
-                            # Öffentliche URL abrufen
+                            
                             public_url = storage.get_public_url(file_name)
                             st.sidebar.success(f"✅ Bild hochgeladen: {file_name}")
                             
                         except Exception as storage_error:
-                            st.error(f"Storage Fehler: {storage_error}")
+                            st.error(f"❌ Storage Fehler: {storage_error}")
                             
-                            # --- METHODE 2: Fallback - Direkter REST Upload ---
-                            st.info("Versuche alternativen Upload...")
-                            
-                            headers = {
-                                "apikey": key,
-                                "Authorization": f"Bearer {key}",
-                                "Content-Type": "image/jpeg"
-                            }
-                            
-                            with open(temp_file, "rb") as f:
-                                image_data = f.read()
-                            
-                            upload_url = f"{url}/storage/v1/object/images/{file_name}"
-                            response = requests.post(upload_url, headers=headers, data=image_data)
-                            
-                            if response.status_code == 200:
-                                public_url = f"{url}/storage/v1/object/public/images/{file_name}"
-                                st.sidebar.success("✅ Alternativer Upload erfolgreich")
-                            else:
-                                st.error(f"❌ Alternativer Upload fehlgeschlagen: {response.status_code} - {response.text}")
-                                raise Exception("Upload fehlgeschlagen")
+                            # Alternative: Direkter REST Upload
+                            try:
+                                headers = {
+                                    "apikey": key,
+                                    "Authorization": f"Bearer {key}",
+                                }
+                                
+                                with open(temp_file, "rb") as f:
+                                    files = {"file": (file_name, f, "image/jpeg")}
+                                    
+                                upload_url = f"{url}/storage/v1/object/images/{file_name}"
+                                response = requests.post(upload_url, headers=headers, files=files)
+                                
+                                if response.status_code == 200:
+                                    public_url = f"{url}/storage/v1/object/public/images/{file_name}"
+                                    st.sidebar.success("✅ Alternativer Upload erfolgreich")
+                                else:
+                                    st.error(f"Upload fehlgeschlagen: {response.text}")
+                                    raise Exception("Upload fehlgeschlagen")
+                                    
+                            except Exception as e:
+                                st.error(f"❌ Auch alternativer Upload fehlgeschlagen: {e}")
+                                raise
                         
-                        # --- In Datenbank speichern ---
+                        # --- DATENBANK EINTRAG (mit id als SERIAL PRIMARY KEY) ---
                         try:
-                            # Prüfe ob Tabelle existiert und schreibbar ist
+                            # WICHTIG: id wird automatisch von der Datenbank vergeben
+                            # Wir lassen id einfach weg - das ist korrekt!
                             insert_data = {
                                 "category": label,
                                 "image_url": public_url,
-                                "created_at": datetime.now().isoformat(),
-                                "confidence": score
+                                "created_at": datetime.now().isoformat()
                             }
                             
+                            # Optional: confidence nur wenn die Spalte existiert
+                            # Prüfe zuerst ob die confidence Spalte existiert
+                            try:
+                                # Test mit einem Select um Spalten zu sehen
+                                sample = supabase.table("items").select("*").limit(1).execute()
+                                if sample.data:
+                                    columns = list(sample.data[0].keys())
+                                    st.sidebar.write("📋 Tabellenspalten:", columns)
+                                    
+                                    # Füge confidence nur hinzu wenn die Spalte existiert
+                                    if 'confidence' in columns:
+                                        insert_data['confidence'] = score
+                            except:
+                                pass  # Ignoriere Fehler beim Spalten-Check
+                            
+                            # Insert durchführen
                             result = supabase.table("items").insert(insert_data).execute()
                             
                             if result.data:
-                                st.success(f"✅ Erfolgreich als '{label}' gespeichert!")
+                                new_id = result.data[0].get('id')
+                                st.success(f"✅ Erfolgreich als '{label}' gespeichert! (ID: {new_id})")
                                 st.balloons()
                             else:
-                                st.warning("⚠️ Bild gespeichert, aber Datenbank-Eintrag fehlgeschlagen")
+                                st.warning("⚠️ Bild gespeichert, aber Datenbank-Eintrag lieferte keine Daten")
                                 
                         except Exception as db_error:
                             st.error(f"❌ Datenbank Fehler: {db_error}")
                             
-                            # Zeige die Datenbank-Struktur für Debugging
-                            try:
-                                # Test: Einfacher Select
-                                test = supabase.table("items").select("*").limit(1).execute()
-                                st.sidebar.write("✅ Datenbank lesbar")
-                                if test.data:
-                                    st.sidebar.write("Spalten:", list(test.data[0].keys()))
-                            except Exception as select_error:
-                                st.sidebar.error(f"❌ Datenbank nicht lesbar: {select_error}")
+                            # Zeige detaillierte Fehlerinformationen
+                            st.info("""
+                            **Mögliche Ursachen:**
+                            1. Die Tabelle 'items' existiert nicht
+                            2. Die Spaltennamen stimmen nicht überein
+                            3. Ein Pflichtfeld fehlt
                             
-                            # Manuellen Eintrag vorschlagen
-                            st.info(f"""
-                            **Manueller Datenbank-Eintrag:**
-                            - Bild-URL: {public_url}
-                            - Kategorie: {label}
-                            
-                            Füge diesen Eintrag manuell im Supabase Dashboard ein.
+                            **Erwartete Tabellenstruktur:**
+                            - id (bigserial, PRIMARY KEY) - wird automatisch vergeben
+                            - category (text)
+                            - image_url (text)
+                            - created_at (timestamp)
+                            - confidence (float, optional)
                             """)
-                    
-                    except Exception as e:
-                        st.error(f"❌ Allgemeiner Fehler: {str(e)}")
-                        import traceback
-                        st.code(traceback.format_exc())
-                    
-                    finally:
-                        if os.path.exists(temp_file):
-                            os.remove(temp_file)
-                            st.sidebar.write("🧹 Temporäre Datei gelöscht")
+                            
+                            # Zeige den Versuchten Insert
+                            st.code(f"Versuchter Insert: {insert_data}", language="json")
+                            
+                            # Biete manuellen Eintrag an
+                            st.markdown("---")
+                            st.subheader("📝 Manueller Eintrag")
+                            st.markdown(f"""
+                            **Falls der automatische Eintrag nicht klappt:**
+                            
+                            1. Gehe zum [Supabase Dashboard]({url})
+                            2. Öffne den Table Editor
+                            3. Füge diesen Eintrag manuell ein:
+                            
+                            ```json
+                            {{
+                              "category": "{label}",
+                              "image_url": "{public_url}",
+                              "created_at": "{datetime.now().isoformat()}"
+                            }}
