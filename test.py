@@ -3,6 +3,7 @@ import numpy as np
 import os
 from datetime import datetime
 from PIL import Image, ImageOps
+import requests
 
 # TensorFlow/Keras Imports
 import tensorflow as tf
@@ -23,10 +24,9 @@ try:
     key: str = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(url, key)
     
-    # OPTION 1: Mit Service Role Key (für Backend-Operationen)
-    # Falls du einen Service Role Key in den Secrets hast:
-    # service_key: str = st.secrets["SUPABASE_SERVICE_KEY"]
-    # supabase = create_client(url, service_key)
+    # Debug: Zeige Verbindungsinfos (ohne den vollen Key zu zeigen)
+    st.sidebar.write("✅ Supabase verbunden")
+    st.sidebar.write(f"URL: {url[:30]}...")
     
 except Exception as e:
     st.error("❌ Fehler: Supabase Secrets nicht gefunden.")
@@ -108,57 +108,113 @@ with tab2:
                 st.error("KI konnte nicht geladen werden.")
             else:
                 with st.spinner("Verarbeite..."):
+                    temp_file = "temp.jpg"
+                    
                     try:
                         # KI Vorhersage
                         label, score = predict_category(img)
+                        st.info(f"KI erkannte: {label} ({score:.2%})")
                         
-                        # Bild-Upload
+                        # Bild speichern
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                         file_name = f"{timestamp}.jpg"
-                        img.save("temp.jpg")
+                        img.save(temp_file)
                         
-                        # Bild in Supabase Storage hochladen
-                        with open("temp.jpg", "rb") as f:
-                            # WICHTIG: Korrekte Parameter-Reihenfolge
-                            supabase.storage.from_("images").upload(
-                                path=file_name,
-                                file=f,
-                                file_options={"content-type": "image/jpeg"}
-                            )
+                        # --- METHODE 1: Supabase Storage Upload (korrigiert) ---
+                        try:
+                            with open(temp_file, "rb") as f:
+                                # WICHTIG: Storage-Bucket existiert? Prüfen!
+                                storage = supabase.storage.from_("images")
+                                
+                                # Test: Liste vorhandene Dateien
+                                try:
+                                    files = storage.list()
+                                    st.sidebar.write(f"📁 Dateien im Bucket: {len(files)}")
+                                except Exception as e:
+                                    st.sidebar.warning(f"Bucket-List Fehler: {e}")
+                                
+                                # Upload mit expliziten Parametern
+                                storage.upload(
+                                    path=file_name,
+                                    file=f,
+                                    file_options={"content-type": "image/jpeg", "upsert": "true"}
+                                )
+                                
+                            # Öffentliche URL abrufen
+                            public_url = storage.get_public_url(file_name)
+                            st.sidebar.success(f"✅ Bild hochgeladen: {file_name}")
+                            
+                        except Exception as storage_error:
+                            st.error(f"Storage Fehler: {storage_error}")
+                            
+                            # --- METHODE 2: Fallback - Direkter REST Upload ---
+                            st.info("Versuche alternativen Upload...")
+                            
+                            headers = {
+                                "apikey": key,
+                                "Authorization": f"Bearer {key}",
+                                "Content-Type": "image/jpeg"
+                            }
+                            
+                            with open(temp_file, "rb") as f:
+                                image_data = f.read()
+                            
+                            upload_url = f"{url}/storage/v1/object/images/{file_name}"
+                            response = requests.post(upload_url, headers=headers, data=image_data)
+                            
+                            if response.status_code == 200:
+                                public_url = f"{url}/storage/v1/object/public/images/{file_name}"
+                                st.sidebar.success("✅ Alternativer Upload erfolgreich")
+                            else:
+                                st.error(f"❌ Alternativer Upload fehlgeschlagen: {response.status_code} - {response.text}")
+                                raise Exception("Upload fehlgeschlagen")
                         
-                        # Öffentliche URL generieren
-                        public_url = supabase.storage.from_("images").get_public_url(file_name)
-                        
-                        # In Datenbank speichern - MIT AUTHENTIFIZIERUNG
-                        # OPTION 2: Anonymen User erstellen (falls RLS für anonyme inserts erlaubt)
-                        # Oder: RLS vorübergehend deaktivieren (nur für Entwicklung)
-                        
-                        # Versuche mit Insert
-                        data = supabase.table("items").insert({
-                            "category": label,
-                            "image_url": public_url,
-                            "created_at": datetime.now().isoformat()
-                        }).execute()
-                        
-                        st.success(f"✅ Als '{label}' gespeichert!")
-                        
+                        # --- In Datenbank speichern ---
+                        try:
+                            # Prüfe ob Tabelle existiert und schreibbar ist
+                            insert_data = {
+                                "category": label,
+                                "image_url": public_url,
+                                "created_at": datetime.now().isoformat(),
+                                "confidence": score
+                            }
+                            
+                            result = supabase.table("items").insert(insert_data).execute()
+                            
+                            if result.data:
+                                st.success(f"✅ Erfolgreich als '{label}' gespeichert!")
+                                st.balloons()
+                            else:
+                                st.warning("⚠️ Bild gespeichert, aber Datenbank-Eintrag fehlgeschlagen")
+                                
+                        except Exception as db_error:
+                            st.error(f"❌ Datenbank Fehler: {db_error}")
+                            
+                            # Zeige die Datenbank-Struktur für Debugging
+                            try:
+                                # Test: Einfacher Select
+                                test = supabase.table("items").select("*").limit(1).execute()
+                                st.sidebar.write("✅ Datenbank lesbar")
+                                if test.data:
+                                    st.sidebar.write("Spalten:", list(test.data[0].keys()))
+                            except Exception as select_error:
+                                st.sidebar.error(f"❌ Datenbank nicht lesbar: {select_error}")
+                            
+                            # Manuellen Eintrag vorschlagen
+                            st.info(f"""
+                            **Manueller Datenbank-Eintrag:**
+                            - Bild-URL: {public_url}
+                            - Kategorie: {label}
+                            
+                            Füge diesen Eintrag manuell im Supabase Dashboard ein.
+                            """)
+                    
                     except Exception as e:
-                        st.error(f"❌ Fehler beim Speichern: {str(e)}")
-                        st.info("""
-                        **Lösungsmöglichkeiten:**
-                        1. **RLS Policy in Supabase erstellen** (empfohlen):
-                           - Gehe zu Authentication → Policies
-                           - Erstelle eine INSERT Policy für "items" Tabelle
-                           - Erlaube INSERT für "anon" oder "authenticated" users
-                        
-                        2. **Service Role Key verwenden**:
-                           - Füge SUPABASE_SERVICE_KEY zu den Secrets hinzu
-                           - Verwende diesen Key statt dem anon key
-                        
-                        3. **RLS temporär deaktivieren** (nur für Tests):
-                           - In Supabase Dashboard → Authentication → Policies
-                           - Bei der "items" Tabelle "Disable RLS" wählen
-                        """)
+                        st.error(f"❌ Allgemeiner Fehler: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
+                    
                     finally:
-                        if os.path.exists("temp.jpg"):
-                            os.remove("temp.jpg")
+                        if os.path.exists(temp_file):
+                            os.remove(temp_file)
+                            st.sidebar.write("🧹 Temporäre Datei gelöscht")
