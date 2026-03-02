@@ -243,3 +243,4 @@ with tab2:
                               "image_url": "{public_url}",
                               "created_at": "{datetime.now().isoformat()}"
                             }}
+""")
