@@ -24,7 +24,6 @@ try:
     supabase: Client = create_client(url, key)
 except Exception:
     st.error("❌ Fehler: Supabase Secrets nicht gefunden.")
-    st.info("Bitte trage SUPABASE_URL und SUPABASE_KEY in den Streamlit Settings ein.")
     st.stop()
 
 # --- 3. KI MODELL SETUP ---
@@ -90,7 +89,6 @@ with tab1:
                     st.image(item['image_url'], use_container_width=True)
                     st.write(f"🆔 ID: {item['id']}")
                     st.write(f"**{item['category']}**")
-                    # Zusätzliche Infos aus der Tabelle anzeigen
                     st.caption(f"📅 {datetime.fromisoformat(item['created_at']).strftime('%d.%m.%Y %H:%M')}")
         else:
             st.info("Keine Fundstücke gefunden.")
@@ -112,39 +110,39 @@ with tab2:
             if model is None:
                 st.error("KI konnte nicht geladen werden.")
             else:
-                with st.spinner("Verarbeite..."):
-                    # KI Analyse
-                    label, score = predict_category(img)
+                try:
+                    with st.spinner("Verarbeite..."):
+                        # KI Analyse
+                        label, score = predict_category(img)
 
-                    # Bild speichern temporär
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    file_name = f"{timestamp}.jpg"
-                    img.save("temp.jpg")
+                        # Bild speichern temporär
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        file_name = f"{timestamp}.jpg"
+                        temp_path = "temp_upload.jpg"
+                        img.save(temp_path)
 
-                    # Upload zu Supabase Storage
-                    with open("temp.jpg", "rb") as f:
-                        supabase.storage.from_("images").upload(file_name, f)
+                        # Upload zu Supabase Storage
+                        with open(temp_path, "rb") as f:
+                            storage_res = supabase.storage.from_("images").upload(file_name, f)
+                        
+                        # URL generieren
+                        public_url = supabase.storage.from_("images").get_public_url(file_name)
 
-                    public_url = supabase.storage.from_("images").get_public_url(file_name)
+                        # In Datenbank speichern
+                        data_to_insert = {
+                            "category": label,
+                            "image_url": public_url
+                        }
+                        
+                        response = supabase.table("items").insert(data_to_insert).execute()
 
-                    # In Datenbank speichern + ID zurückbekommen
-                    # Die Tabelle hat folgende Struktur:
-                    # - id (int8, auto-increment)
-                    # - created_at (timestamptz, auto-set)
-                    # - category (text)
-                    # - image_url (text)
-                    response = supabase.table("items").insert({
-                        "category": label,
-                        "image_url": public_url
-                        # created_at und id werden automatisch gesetzt
-                    }).execute()
-
-                    new_item = response.data[0]
-                    new_id = new_item["id"]
-                    created_at = new_item["created_at"]
-
-                    st.success(f"✅ Als '{label}' gespeichert! (ID: {new_id})")
-                    st.info(f"📅 Erfasst am: {datetime.fromisoformat(created_at).strftime('%d.%m.%Y %H:%M')}")
-
-                    if os.path.exists("temp.jpg"):
-                        os.remove("temp.jpg")
+                        if response.data:
+                            new_item = response.data[0]
+                            st.success(f"✅ Als '{label}' gespeichert! (ID: {new_item['id']})")
+                        
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                            
+                except Exception as e:
+                    st.error(f"Fehler beim Speichern: {e}")
+                    st.info("Hinweis: Überprüfe die RLS-Policies in deinem Supabase Dashboard.")
