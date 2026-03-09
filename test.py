@@ -90,6 +90,8 @@ with tab1:
                     st.image(item['image_url'], use_container_width=True)
                     st.write(f"🆔 ID: {item['id']}")
                     st.write(f"**{item['category']}**")
+                    # Zusätzliche Infos aus der Tabelle anzeigen
+                    st.caption(f"📅 {datetime.fromisoformat(item['created_at']).strftime('%d.%m.%Y %H:%M')}")
         else:
             st.info("Keine Fundstücke gefunden.")
     except Exception as e:
@@ -126,15 +128,23 @@ with tab2:
                     public_url = supabase.storage.from_("images").get_public_url(file_name)
 
                     # In Datenbank speichern + ID zurückbekommen
+                    # Die Tabelle hat folgende Struktur:
+                    # - id (int8, auto-increment)
+                    # - created_at (timestamptz, auto-set)
+                    # - category (text)
+                    # - image_url (text)
                     response = supabase.table("items").insert({
                         "category": label,
                         "image_url": public_url
+                        # created_at und id werden automatisch gesetzt
                     }).execute()
 
                     new_item = response.data[0]
                     new_id = new_item["id"]
+                    created_at = new_item["created_at"]
 
                     st.success(f"✅ Als '{label}' gespeichert! (ID: {new_id})")
+                    st.info(f"📅 Erfasst am: {datetime.fromisoformat(created_at).strftime('%d.%m.%Y %H:%M')}")
 
                     if os.path.exists("temp.jpg"):
                         os.remove("temp.jpg")
