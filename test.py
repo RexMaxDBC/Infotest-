@@ -56,52 +56,27 @@ def predict_category(image):
     label = class_names[index].strip()[2:]
     return label, float(prediction[0][index])
 
-# --- 4. ADVANCED UI DESIGN (CSS) ---
+# --- 4. UI DESIGN (CSS) ---
 st.set_page_config(page_title="Fundbüro Katharineum", layout="wide", page_icon="🏫")
 
 st.markdown("""
     <style>
-    /* Hintergrund der App */
-    .stApp { background-color: #fdfdfd; }
-    
-    /* Titel-Styling */
+    .stApp { background-color: #f8f9fa; }
     .main-title {
-        font-family: 'Helvetica Neue', sans-serif;
         color: #1e3a8a;
         text-align: center;
-        padding: 20px;
         font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 2px;
+        padding: 10px;
     }
-
-    /* Karte für Fundstücke */
-    div[data-testid="stVerticalBlock"] > div.stColumn > div {
+    /* Karten-Design für Fundstücke */
+    .item-container {
         background: white;
         padding: 15px;
-        border-radius: 15px;
-        border: 1px solid #eee;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        transition: transform 0.2s ease;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
     }
-    
-    div[data-testid="stVerticalBlock"] > div.stColumn > div:hover {
-        transform: translateY(-5px);
-        border-color: #3b82f6;
-    }
-
-    /* Tab-Styling */
-    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #f1f5f9;
-        border-radius: 10px;
-        padding: 10px 25px;
-        font-weight: bold;
-    }
-    .stTabs [aria-selected="true"] { background-color: #3b82f6 !important; color: white !important; }
-
-    /* Bild-Rahmen */
-    .stImage img { border-radius: 10px; object-fit: cover; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -110,23 +85,86 @@ st.markdown("<h1 class='main-title'>🏫 Digitales Fundbüro Katharineum</h1>", 
 tab1, tab2 = st.tabs(["🔍 KATALOG DURCHSUCHEN", "📤 NEUES FUNDSTÜCK MELDEN"])
 
 # ===============================
-# TAB 1 – KATALOG (GRID LAYOUT)
+# TAB 1 – KATALOG
 # ===============================
 with tab1:
-    col1, col2 = st.columns([2,1])
-    with col1:
-        search_query = st.text_input("", placeholder="Suche nach Kategorie oder ID...", label_visibility="collapsed")
+    search_query = st.text_input("Suche nach Gegenstand oder ID", placeholder="z.B. Tasche...")
     
     try:
         query = supabase.table("items").select("*")
         if search_query:
-            if search_query.isdigit(): query = query.eq("id", int(search_query))
-            else: query = query.ilike("category", f"%{search_query}%")
+            if search_query.isdigit():
+                query = query.eq("id", int(search_query))
+            else:
+                query = query.ilike("category", f"%{search_query}%")
 
         result = query.order("created_at", descending=True).execute()
         items = result.data
 
         if items:
-            # Erstellt ein Raster (4 Spalten)
-            rows = [items[i:i + 4] for i in range(0, len(items), 4)]
-            for row in rows:
+            # Grid mit 4 Spalten
+            for i in range(0, len(items), 4):
+                cols = st.columns(4)
+                chunk = items[i:i + 4]
+                for idx, item in enumerate(chunk):
+                    with cols[idx]:
+                        st.markdown('<div class="item-container">', unsafe_allow_html=True)
+                        st.image(item['image_url'], use_container_width=True)
+                        st.markdown(f"**{item['category']}**")
+                        st.caption(f"🆔 ID: {item['id']} | 📅 {datetime.fromisoformat(item['created_at']).strftime('%d.%m.')}")
+                        st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("Keine Fundstücke gefunden.")
+    except Exception as e:
+        st.error(f"Fehler beim Laden: {e}")
+
+# ===============================
+# TAB 2 – MELDEN
+# ===============================
+with tab2:
+    st.subheader("Neues Fundstück erfassen")
+    col_img, col_info = st.columns([1, 1])
+    
+    with col_img:
+        uploaded_file = st.file_uploader("Bild hochladen", type=["jpg", "png", "jpeg"])
+        if uploaded_file:
+            img = Image.open(uploaded_file).convert("RGB")
+            st.image(img, use_container_width=True, caption="Vorschau")
+
+    with col_info:
+        if uploaded_file:
+            if st.button("🚀 ANALYSIEREN & SPEICHERN", use_container_width=True):
+                if model is None:
+                    st.error("KI-Modell nicht geladen.")
+                else:
+                    try:
+                        with st.spinner("KI analysiert..."):
+                            # 1. Analyse
+                            label, score = predict_category(img)
+                            
+                            # 2. Temporär speichern
+                            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                            file_name = f"{timestamp}.jpg"
+                            img.save("temp_upload.jpg")
+
+                            # 3. Supabase Upload
+                            with open("temp_upload.jpg", "rb") as f:
+                                supabase.storage.from_("images").upload(file_name, f)
+
+                            # 4. Datenbank Eintrag
+                            public_url = supabase.storage.from_("images").get_public_url(file_name)
+                            response = supabase.table("items").insert({
+                                "category": label, 
+                                "image_url": public_url
+                            }).execute()
+
+                            if response.data:
+                                st.success(f"Erfolgreich als '{label}' gespeichert!")
+                                st.balloons()
+                            
+                            if os.path.exists("temp_upload.jpg"):
+                                os.remove("temp_upload.jpg")
+                    except Exception as e:
+                        st.error(f"Fehler: {e}")
+        else:
+            st.info("Bitte lade ein Foto hoch, um zu beginnen.")
